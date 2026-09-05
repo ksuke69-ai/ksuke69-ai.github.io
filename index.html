@@ -2,9 +2,93 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>テストページ</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>きのこダッシュ！</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center; overflow: hidden;
+      font-family: "Arial Rounded MT Bold", "Hiragino Maru Gothic ProN", sans-serif;
+      background: radial-gradient(circle at 50% 15%, #53d3ff 0 11%, #1683d8 45%, #062c79 100%);
+    }
+    .shell { width: min(100%, 960px); padding: 16px; }
+    .game-frame {
+      position: relative; overflow: hidden; border: 7px solid #101d52; border-radius: 18px;
+      background: #60d7ff; box-shadow: 0 18px 0 #071132, 0 27px 45px #0008;
+    }
+    .start-panel { position: absolute; inset: 0; display: grid; place-content: center; gap: 14px; z-index: 2; text-align: center; background: #07164780; }
+    .start-panel[hidden] { display: none; }
+    .start-panel strong { color: #fff; font-size: clamp(1.1rem, 3vw, 1.75rem); text-shadow: 0 3px 0 #10245d; }
+    .play-button { min-width: 190px; min-height: 58px; border: 0; border-radius: 16px; color: #fff; cursor: pointer; font: 900 1.35rem "Arial Rounded MT Bold", "Hiragino Maru Gothic ProN", sans-serif; background: #f0443d; box-shadow: inset 0 -6px #a91f31, 0 5px 0 #7d1732; }
+    .play-button:active { transform: translateY(3px); box-shadow: inset 0 -3px #a91f31, 0 2px 0 #7d1732; }
+    canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; image-rendering: crisp-edges; }
+    .hint {
+      text-align: center; color: white; font-size: clamp(.75rem, 2vw, 1rem); font-weight: 800;
+      letter-spacing: .05em; margin: 20px 0 0; text-shadow: 0 2px 0 #0c3c88;
+    }
+    .touch { display: flex; justify-content: space-between; margin-top: 13px; user-select: none; }
+    .touch button {
+      width: 68px; height: 46px; border: 0; border-radius: 12px; color: #fff; font: 900 22px inherit;
+      background: #172b69; box-shadow: inset 0 -5px #07143c, 0 4px 0 #07143c; touch-action: manipulation;
+    }
+    .touch button:active { transform: translateY(3px); box-shadow: inset 0 -2px #07143c, 0 1px 0 #07143c; }
+    .touch .jump { width: 110px; background: #f0443d; box-shadow: inset 0 -5px #a91f31, 0 4px 0 #7d1732; }
+    @media (min-width: 700px) { .touch { display: none; } }
+  </style>
 </head>
 <body>
-  <h1>GitHub Pages Test</h1>
+  <main class="shell">
+    <section class="game-frame" aria-label="きのこダッシュゲーム">
+      <canvas id="game" width="900" height="506" aria-label="矢印キーで動き、スペースキーでジャンプする横スクロールゲーム"></canvas>
+      <div class="start-panel" id="start-panel">
+        <strong id="start-message">コインを集めて、ゴールを目指そう！</strong>
+        <button class="play-button" id="play-button" type="button">▶ PLAY</button>
+      </div>
+    </section>
+    <div class="touch" aria-label="タッチ操作"><button data-key="ArrowLeft">←</button><button class="jump" data-key=" ">JUMP</button><button data-key="ArrowRight">→</button></div>
+    <p class="hint">← → で移動　 SPACE でジャンプ　　ゴールの旗を目指そう！</p>
+  </main>
+  <script>
+    const canvas = document.querySelector('#game'), ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height, keys = {};
+    const player = { x: 78, y: 330, w: 31, h: 42, vx: 0, vy: 0, grounded: false, face: 1, lives: 3 };
+    const platforms = [
+      [0, 418, 285, 88], [318, 386, 135, 120], [496, 344, 111, 162], [652, 386, 93, 120], [779, 330, 121, 176],
+      [169, 324, 75, 18], [354, 282, 72, 18], [524, 230, 63, 18], [665, 282, 59, 18]
+    ];
+    const coins = [[188,285],[219,285],[375,244],[405,244],[543,192],[684,244],[813,286],[847,286]];
+    const blocks = [[270,280,'?'],[302,280,'brick'],[470,250,'?'],[620,300,'brick'],[652,300,'?']];
+    const enemy = { x: 546, y: 310, w: 33, h: 34, vx: 1.1 };
+    const panel = document.querySelector('#start-panel'), playButton = document.querySelector('#play-button'), startMessage = document.querySelector('#start-message');
+    let collected = new Set(), score = 0, time = 300, state = 'ready', last = performance.now();
+    function rect(x,y,w,h,c) { ctx.fillStyle=c; ctx.fillRect(x,y,w,h); }
+    function cloud(x,y,s) { ctx.fillStyle='#fff'; [[0,12,32,17],[19,0,35,30],[44,8,38,21],[71,14,27,15]].forEach(a=>ctx.fillRect(x+a[0]*s,y+a[1]*s,a[2]*s,a[3]*s)); }
+    function brick(x,y,type) { rect(x,y,31,31,type==='?'?'#ffc531':'#bd5730'); rect(x+3,y+3,25,25,type==='?'?'#ffd94f':'#e77a3a'); if(type==='?'){ctx.fillStyle='#fff4b4';ctx.font='bold 23px sans-serif';ctx.fillText('?',x+8,y+24)} else {ctx.strokeStyle='#8e3a25';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,y+15);ctx.lineTo(x+31,y+15);ctx.moveTo(x+15,y);ctx.lineTo(x+15,y+15);ctx.moveTo(x+7,y+15);ctx.lineTo(x+7,y+31);ctx.moveTo(x+24,y+15);ctx.lineTo(x+24,y+31);ctx.stroke()} }
+    function drawGround() { platforms.forEach(([x,y,w,h])=>{rect(x,y,w,h,'#8d482d'); rect(x,y,w,10,'#4abf49'); rect(x,y+10,w,4,'#238d3a'); for(let i=x+12;i<x+w;i+=25)rect(i,y+25,3,3,'#bd7045');}); }
+    function drawPlayer(){ const {x,y,face}=player; ctx.save(); if(face<0){ctx.translate(x*2+31,0);ctx.scale(-1,1)} rect(x+5,y+11,21,20,'#e94135');rect(x+7,y+5,17,10,'#e94135');rect(x+10,y+12,12,13,'#f5b27e');rect(x+20,y+14,4,5,'#162449');rect(x+4,y+26,22,13,'#2f5da8');rect(x+2,y+26,7,13,'#f5b27e');rect(x+23,y+26,7,13,'#f5b27e');rect(x+4,y+39,10,4,'#5a2e25');rect(x+19,y+39,10,4,'#5a2e25');rect(x+5,y+2,23,5,'#c52a2e');ctx.restore(); }
+    function drawEnemy(){ const {x,y}=enemy; rect(x+3,y+13,27,16,'#8b4a32');rect(x,y+19,33,10,'#a85e39');rect(x+5,y+7,23,15,'#d89a62');rect(x+8,y+12,4,5,'#1d1921');rect(x+21,y+12,4,5,'#1d1921');rect(x+5,y+29,10,5,'#51291f');rect(x+20,y+29,10,5,'#51291f'); }
+    function drawCoin(x,y,i){ if(collected.has(i))return; ctx.fillStyle='#ffcc20';ctx.fillRect(x+4,y,9,20);ctx.fillStyle='#fff27c';ctx.fillRect(x+6,y+3,3,14); }
+    function reset(){Object.assign(player,{x:78,y:330,vx:0,vy:0,grounded:false,face:1});Object.assign(enemy,{x:546,vx:1.1});score=0;collected=new Set();time=300;}
+    function showPanel(message, buttonText){ startMessage.textContent=message; playButton.textContent=buttonText; panel.hidden=false; }
+    function startGame(){ reset(); state='play'; panel.hidden=true; canvas.focus(); }
+    function collision(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y}
+    function finish(won){ state=won?'won':'lost'; showPanel(won?'CLEAR! すべての冒険をクリア！':'GAME OVER　もう一度チャレンジ！', '↻ もう一度 PLAY'); }
+    function update(dt){ if(state!=='play')return; time-=dt/1000; if(time<=0){finish(false);return} const left=keys.ArrowLeft||keys.a,right=keys.ArrowRight||keys.d; player.vx=(right?3.6:left?-3.6:0); if(player.vx)player.face=Math.sign(player.vx); player.vy+=.52; player.x+=player.vx; player.x=Math.max(0,Math.min(W-player.w,player.x)); player.y+=player.vy; player.grounded=false;
+      platforms.forEach(([x,y,w])=>{if(player.vy>=0&&player.x+player.w>x&&player.x<x+w&&player.y+player.h>=y&&player.y+player.h-player.vy<y+2){player.y=y-player.h;player.vy=0;player.grounded=true}});
+      coins.forEach(([x,y],i)=>{if(!collected.has(i)&&collision(player,{x,y,w:18,h:25})){collected.add(i);score+=100}});
+      enemy.x+=enemy.vx; if(enemy.x<510||enemy.x>568)enemy.vx*=-1;
+      if(collision(player,enemy)){finish(false);return} if(player.y>H){finish(false);return} if(player.x>843&&player.y<330){score+=500;finish(true)} }
+    function draw(){ ctx.clearRect(0,0,W,H); rect(0,0,W,H,'#61d7ff'); cloud(85,72,1.1);cloud(421,91,.75);cloud(700,56,.95);
+      ctx.fillStyle='#48b554'; [[20,389,75,55],[110,378,100,65],[690,391,98,45]].forEach(([x,y,w,h])=>{ctx.beginPath();ctx.arc(x+w/2,y+h/2,w/2,Math.PI,0);ctx.fill()});
+      drawGround(); blocks.forEach(b=>brick(...b)); coins.forEach((c,i)=>drawCoin(...c,i));
+      rect(846,159,6,171,'#e8e8e8');rect(852,159,48,30,'#f44346');ctx.fillStyle='#fff';ctx.font='bold 14px sans-serif';ctx.fillText('GO!',862,180); drawEnemy(); drawPlayer();
+      ctx.fillStyle='#11245c';ctx.font='bold 22px "Arial Rounded MT Bold",sans-serif';ctx.fillText('きのこダッシュ！',24,37);ctx.font='bold 17px sans-serif';ctx.fillText('SCORE  '+String(score).padStart(5,'0'),25,63);ctx.fillText('COIN  × '+collected.size,360,37);ctx.fillText('TIME  '+Math.ceil(time),750,37);
+    }
+    function loop(now){const dt=Math.min(35,now-last);last=now;update(dt);draw();requestAnimationFrame(loop)}
+    addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight',' ','a','d'].includes(e.key)){e.preventDefault();keys[e.key]=true}if(e.key===' '){if(state!=='play')startGame();else if(player.grounded)player.vy=-11}});addEventListener('keyup',e=>keys[e.key]=false);
+    playButton.addEventListener('click',startGame);
+    document.querySelectorAll('[data-key]').forEach(b=>{const key=b.dataset.key; b.addEventListener('pointerdown',e=>{e.preventDefault();if(key===' '){if(state!=='play')startGame();else if(player.grounded)player.vy=-11}else keys[key]=true});['pointerup','pointercancel','pointerleave'].forEach(ev=>b.addEventListener(ev,()=>keys[key]=false))}); requestAnimationFrame(loop);
+  </script>
 </body>
 </html>
